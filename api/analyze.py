@@ -40,8 +40,15 @@ def add_to_calendar(data):
         'start': {'dateTime': data['start_time'], 'timeZone': 'Asia/Seoul'},
         'end': {'dateTime': data['end_time'], 'timeZone': 'Asia/Seoul'},
     }
-    
-    result = service.events().insert(calendarId='primary', body=event).execute()
+    # [수정 전]
+    # 이렇게 하면 로봇 혼자만의 캘린더에 적힘 (내 폰에 안 뜸)
+    #result = service.events().insert(calendarId='primary', ...).execute()
+
+    # [수정 후]
+    # 일정을 넣고 싶은 '실제 사용하는 계정' 이메일을 넣으세요
+    target_calendar_id = 'my_personal_id@gmail.com' 
+    result = service.events().insert(calendarId=target_calendar_id, ...).execute()
+
     return result.get('htmlLink')
 
 # 어떤 주소로 들어오든 다 받게 설정
