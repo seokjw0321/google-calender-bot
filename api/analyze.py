@@ -3,15 +3,14 @@ from openai import AzureOpenAI
 import os
 import json
 import base64
-import traceback # 에러 위치 추적용
+import traceback
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from datetime import datetime, timedelta, timezone  # <--- 이거 꼭 추가하세요!
+from datetime import datetime, timedelta, timezone
 
 app = Flask(__name__)
 
-# --- 설정 확인 (디버깅용) ---
-# 키가 제대로 들어왔는지 확인 (보안상 앞 3글자만 로그에 찍음)
+# --- 설정 로드 ---
 AZURE_KEY = os.environ.get("AZURE_OPENAI_API_KEY", "")
 print(f"Azure Key Loaded: {AZURE_KEY[:3]}***") 
 
@@ -34,17 +33,17 @@ def add_to_calendar(data):
     )
     service = build('calendar', 'v3', credentials=creds)
     
-    # --- [수정된 부분: 날짜 안전장치] ---
     start_str = data['start_time']
     end_str = data.get('end_time', '')
 
     # 종료 시간이 비어있으면, 시작 시간 + 1시간으로 자동 설정
     if not end_str:
-        # 문자열을 날짜 객체로 변환 (ISO 포맷)
-        start_dt = datetime.fromisoformat(start_str)
-        end_dt = start_dt + timedelta(hours=1)
-        end_str = end_dt.isoformat()
-    # ----------------------------------
+        try:
+            start_dt = datetime.fromisoformat(start_str)
+            end_dt = start_dt + timedelta(hours=1)
+            end_str = end_dt.isoformat()
+        except:
+            pass # 날짜 변환 실패 시 그냥 둠
 
     event = {
         'summary': data.get('summary', 'AI 일정'),
@@ -54,49 +53,66 @@ def add_to_calendar(data):
         'end': {'dateTime': end_str, 'timeZone': 'Asia/Seoul'},
     }
     
-    # 본인 이메일이 맞는지 다시 한번 확인하세요!
+    # ★ 본인 이메일 확인 (rhdtka21@gmail.com)
     result = service.events().insert(calendarId='rhdtka21@gmail.com', body=event).execute()
     return result.get('htmlLink')
-    
-# 어떤 주소로 들어오든 다 받게 설정
+
 @app.route('/api', methods=['POST'])
 @app.route('/api/index', methods=['POST'])
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
     try:
-        # --- [추가할 코드: 한국 시간 구하기] ---
-        # Vercel 서버는 영국/미국 시간이라서 한국 시간(KST)으로 9시간 더해줘야 합니다.
+        # 1. 한국 시간(KST) 구하기
         KST = timezone(timedelta(hours=9))
         now = datetime.now(KST)
-        # 예: "2025년 11월 27일 Thursday 11:00" 형식으로 만듦
         current_time_str = now.strftime("%Y년 %m월 %d일 %A %H:%M")
-        # ------------------------------------읽기 (Raw Data 방식)
-        raw_data = request.data
+        print(f"현재 시간: {current_time_str}")
+
+        user_content = []
+
+        # ---------------------------------------------------------
+        # [로직 분기] 텍스트(JSON)인지 이미지(File/Raw)인지 판단
+        # ---------------------------------------------------------
         
-        if not raw_data:
-            # 데이터가 없으면 혹시 Form으로 보냈는지 확인
-            if 'file' in request.files:
+        # (A) 시리/단축어에서 텍스트(JSON)로 보낸 경우
+        if request.is_json:
+            json_data = request.get_json()
+            if 'text' in json_data:
+                user_text = json_data['text']
+                print(f"텍스트 입력 수신: {user_text}")
+                user_content = [{"type": "text", "text": user_text}]
+
+        # (B) 이미지를 보낸 경우 (기존 로직)
+        if not user_content:
+            raw_data = request.data
+            # Form-data로 왔을 경우 처리
+            if not raw_data and 'file' in request.files:
                 raw_data = request.files['file'].read()
-            else:
-                return jsonify({"error": "이미지가 도착하지 않았습니다. 단축어 설정을 확인하세요."}), 400
+            
+            if raw_data:
+                print(f"이미지 입력 수신. 크기: {len(raw_data)} bytes")
+                base64_image = base64.b64encode(raw_data).decode('utf-8')
+                user_content = [
+                    {"type": "text", "text": "이 이미지 내용을 바탕으로 일정을 등록해줘."},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                ]
 
-        print(f"이미지 수신 완료. 크기: {len(raw_data)} bytes")
+        # 데이터가 아무것도 없으면 에러
+        if not user_content:
+            return jsonify({"error": "데이터가 없습니다. (텍스트도 이미지도 아님)"}), 400
 
-        # 2. Azure 전송 준비 (Base64 변환)
-        base64_image = base64.b64encode(raw_data).decode('utf-8')
-
-        # 3. Azure GPT-4o 분석
+        # ---------------------------------------------------------
+        # 2. Azure GPT-4o 분석 요청
+        # ---------------------------------------------------------
         response = client.chat.completions.create(
             model=DEPLOYMENT_NAME,
             messages=[
                 {
                     "role": "system", 
-                    "content": f"**현재 시각은 {current_time_str}입니다**. 당신은 일정 관리 비서야. 이미지에서 일정 정보를 추출해. 반드시 JSON 포맷(summary, location, description, start_time, end_time)으로 답해. 날짜는 ISO8601(YYYY-MM-DDTHH:MM:SS) 형식으로. 없는 내용은 빈카드로 둬."
+                    # 프롬프트 수정: "이미지에서" -> "입력된 내용(텍스트 또는 이미지)에서"
+                    "content": f"**현재 시각은 {current_time_str}입니다**. 당신은 일정 관리 비서입니다. 사용자가 입력한 내용(텍스트 또는 이미지)에서 일정 정보를 추출하세요. 반드시 JSON 포맷(summary, location, description, start_time, end_time)으로 답하세요. 날짜는 ISO8601(YYYY-MM-DDTHH:MM:SS) 형식입니다. 없는 내용은 빈칸으로 두세요."
                 },
-                {"role": "user", "content": [
-                    {"type": "text", "text": "일정 등록해줘"},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                ]}
+                {"role": "user", "content": user_content}
             ],
             response_format={"type": "json_object"},
             max_tokens=500
@@ -106,13 +122,12 @@ def analyze():
         print(f"GPT 응답: {gpt_result}")
         event_data = json.loads(gpt_result)
 
-        # 4. 캘린더 등록
+        # 3. 캘린더 등록
         link = add_to_calendar(event_data)
         
         return jsonify({"message": "성공!", "link": link})
 
     except Exception as e:
-        # 에러가 나면 폰 화면에 에러 내용을 그대로 보여줌 (★중요)
         error_msg = traceback.format_exc()
         print(f"에러 발생: {error_msg}")
         return jsonify({"error": "서버 내부 오류", "details": str(e), "trace": error_msg}), 500
