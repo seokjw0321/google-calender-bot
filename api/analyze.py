@@ -6,7 +6,7 @@ import base64
 import traceback # 에러 위치 추적용
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from datetime import datetime, timedelta  # <--- 이거 꼭 추가하세요!
+from datetime import datetime, timedelta, timezone  # <--- 이거 꼭 추가하세요!
 
 app = Flask(__name__)
 
@@ -64,7 +64,13 @@ def add_to_calendar(data):
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
     try:
-        # 1. 파일 데이터 읽기 (Raw Data 방식)
+        # --- [추가할 코드: 한국 시간 구하기] ---
+        # Vercel 서버는 영국/미국 시간이라서 한국 시간(KST)으로 9시간 더해줘야 합니다.
+        KST = timezone(timedelta(hours=9))
+        now = datetime.now(KST)
+        # 예: "2025년 11월 27일 Thursday 11:00" 형식으로 만듦
+        current_time_str = now.strftime("%Y년 %m월 %d일 %A %H:%M")
+        # ------------------------------------읽기 (Raw Data 방식)
         raw_data = request.data
         
         if not raw_data:
@@ -85,7 +91,7 @@ def analyze():
             messages=[
                 {
                     "role": "system", 
-                    "content": "일정 관리 비서야. 이미지에서 일정 정보를 추출해. 반드시 JSON 포맷(summary, location, description, start_time, end_time)으로 답해. 날짜는 ISO8601(YYYY-MM-DDTHH:MM:SS) 형식으로. 없는 내용은 빈카드로 둬."
+                    "content": f"**현재 시각은 {current_time_str}입니다**. 당신은 일정 관리 비서야. 이미지에서 일정 정보를 추출해. 반드시 JSON 포맷(summary, location, description, start_time, end_time)으로 답해. 날짜는 ISO8601(YYYY-MM-DDTHH:MM:SS) 형식으로. 없는 내용은 빈카드로 둬."
                 },
                 {"role": "user", "content": [
                     {"type": "text", "text": "일정 등록해줘"},
