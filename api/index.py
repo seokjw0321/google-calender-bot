@@ -17,7 +17,7 @@ GOOGLE_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
 # Azure 클라이언트
 client = AzureOpenAI(
     api_key=AZURE_KEY,
-    api_version="2024-02-15-preview",
+    api_version="2025-01-01-preview",
     azure_endpoint=AZURE_ENDPOINT
 )
 
