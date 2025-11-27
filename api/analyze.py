@@ -6,6 +6,7 @@ import base64
 import traceback # 에러 위치 추적용
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from datetime import datetime, timedelta  # <--- 이거 꼭 추가하세요!
 
 app = Flask(__name__)
 
@@ -33,23 +34,30 @@ def add_to_calendar(data):
     )
     service = build('calendar', 'v3', credentials=creds)
     
+    # --- [수정된 부분: 날짜 안전장치] ---
+    start_str = data['start_time']
+    end_str = data.get('end_time', '')
+
+    # 종료 시간이 비어있으면, 시작 시간 + 1시간으로 자동 설정
+    if not end_str:
+        # 문자열을 날짜 객체로 변환 (ISO 포맷)
+        start_dt = datetime.fromisoformat(start_str)
+        end_dt = start_dt + timedelta(hours=1)
+        end_str = end_dt.isoformat()
+    # ----------------------------------
+
     event = {
         'summary': data.get('summary', 'AI 일정'),
         'location': data.get('location', ''),
         'description': data.get('description', ''),
-        'start': {'dateTime': data['start_time'], 'timeZone': 'Asia/Seoul'},
-        'end': {'dateTime': data['end_time'], 'timeZone': 'Asia/Seoul'},
+        'start': {'dateTime': start_str, 'timeZone': 'Asia/Seoul'},
+        'end': {'dateTime': end_str, 'timeZone': 'Asia/Seoul'},
     }
-    # [수정 전]
-    # 이렇게 하면 로봇 혼자만의 캘린더에 적힘 (내 폰에 안 뜸)
-    #result = service.events().insert(calendarId='primary', ...).execute()
-
-    # [수정 후]
-    # 일정을 넣고 싶은 '실제 사용하는 계정' 이메일을 넣으세요
+    
+    # 본인 이메일이 맞는지 다시 한번 확인하세요!
     result = service.events().insert(calendarId='rhdtka21@gmail.com', body=event).execute()
-
     return result.get('htmlLink')
-
+    
 # 어떤 주소로 들어오든 다 받게 설정
 @app.route('/api', methods=['POST'])
 @app.route('/api/index', methods=['POST'])
