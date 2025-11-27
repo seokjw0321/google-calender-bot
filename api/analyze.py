@@ -46,8 +46,7 @@ def add_to_calendar(data):
 
     # [수정 후]
     # 일정을 넣고 싶은 '실제 사용하는 계정' 이메일을 넣으세요
-    target_calendar_id = 'my_personal_id@gmail.com' 
-    result = service.events().insert(calendarId=target_calendar_id, ...).execute()
+    result = service.events().insert(calendarId='rhdtka21@gmail.com', body=event).execute()
 
     return result.get('htmlLink')
 
